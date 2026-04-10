@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <body style="font-family: sans-serif; text-align: center;">
+     <h1>Portal da Universidade</h1>
+     <p>Status do Sistema: <span id="status">Online</span></p>
+     <div id="nova-funcao" style="display: none; background: #e0f7fa; padding: 20px; border: 2px solid #00bcd4;">
+       <h3> Nova Função: Chat Acadêmico com IA</h3> 🚀
+       <input type="text" placeholder="Pergunte algo...">
+       <button>Enviar</button>
+     </div>
+     <script>
+       // Simulando a busca de uma Flag (pode ser de um banco ou arquivo)
+       const flags = {
+         "EXIBIR_IA": false // O "interruptor"
+       };
+       if (flags.EXIBIR_IA) {
+         document.getElementById('nova-funcao').style.display = 'block';
+       }
+     </script>
+  </body>
+</html>
