@@ -1,4 +1,4 @@
-# Meu Projeto
+# Projeto de Prática de GCS
 
 Projeto simples criado para atividade prática de Gerência de Configuração de Software.
 
