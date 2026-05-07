@@ -1,6 +1,13 @@
 # Projeto de Prática de GCS
 
-Projeto simples criado para atividade prática de Gerência de Configuração de Software.
+Versão atual: **v1.0.0**
+
+Projeto desenvolvido para demonstrar práticas de Gerência de Configuração de Software (GCS), incluindo:
+- controle de versões;
+- identificação de ICs;
+- baseline;
+- feature flags;
+- organização de repositório.
 
 ## Estrutura
 
@@ -13,3 +20,4 @@ Projeto simples criado para atividade prática de Gerência de Configuração de
 - JavaScript
 - Node.js
 - Git
+
