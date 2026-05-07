@@ -9,6 +9,7 @@
 | Configuração | config.env | Variáveis de ambiente e configuração | 1.0.0 |
 | Documentação | README.md | Documentação principal do projeto | 1.0.0 |
 | Documentação | CONFIG_MAP.md | Mapeamento dos ICs do projeto | 1.0.0 |
+| Documentação | DOCUMENTACAO_TECNICA.md | Documentação técnica do sistema | 1.0.0 |
 | Controle de versão | Git | Sistema de versionamento distribuído | 2.x |
 | Linguagem | JavaScript | Linguagem da aplicação | ES6 |
 | Linguagem | HTML5 | Estrutura da interface web | HTML5 |
