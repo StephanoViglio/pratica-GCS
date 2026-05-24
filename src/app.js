@@ -64,3 +64,9 @@ setTimeout(() => {
   statusSistema.innerHTML = 'Estável';
 
 }, 3000);
+
+window.onload = () => {
+
+  painelIA.style.display = 'block';
+
+};
