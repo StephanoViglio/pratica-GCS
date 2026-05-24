@@ -42,7 +42,7 @@ botaoEnviar.addEventListener('click', () => {
 
   const pergunta = campoPergunta.value;
 
-  if (pergunta.trim() === '') {
+  if (pergunta === '') {
 
     resposta.innerHTML =
       'Digite uma pergunta válida.';
