@@ -64,3 +64,25 @@ setTimeout(() => {
   statusSistema.innerHTML = 'Estável';
 
 }, 3000);
+
+// ===============================
+// INICIALIZAÇÃO DA INTERFACE
+// ===============================
+
+function inicializarSistema() {
+
+  if (flags.EXIBIR_IA) {
+
+    painelIA.style.display = 'block';
+
+    painelIA.style.background = '#fd5d5d';
+
+  }
+
+}
+
+// Inicializa sistema após carregamento da página
+window.addEventListener(
+  'DOMContentLoaded',
+  inicializarSistema
+);
