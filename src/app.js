@@ -42,7 +42,7 @@ botaoEnviar.addEventListener('click', () => {
 
   const pergunta = campoPergunta.value;
 
-  if (pergunta === '') {
+  if (pergunta.trim() === '') {
 
     resposta.innerHTML =
       'Digite uma pergunta válida.';
@@ -65,8 +65,24 @@ setTimeout(() => {
 
 }, 3000);
 
-window.onload = () => {
+// ===============================
+// INICIALIZAÇÃO DA INTERFACE
+// ===============================
 
-  painelIA.style.display = 'block';
+function inicializarSistema() {
 
-};
+  if (flags.EXIBIR_IA) {
+
+    painelIA.style.display = 'block';
+
+    painelIA.style.background = '#fd5d5d';
+
+  }
+
+}
+
+// Inicializa sistema após carregamento da página
+window.addEventListener(
+  'DOMContentLoaded',
+  inicializarSistema
+);
