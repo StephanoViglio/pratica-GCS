@@ -28,6 +28,13 @@ LABEL org.opencontainers.image.title="portal-universidade" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.revision="${GIT_SHA}"
 
+# Aplica as correções de segurança já publicadas pelo Alpine (ex.: libexpat),
+# sem esperar a imagem base oficial ser reconstruída. A imagem roda sem root,
+# então troca para root só para atualizar e volta ao usuário nginx (UID 101).
+USER root
+RUN apk upgrade --no-cache
+USER 101
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /build/site/ /usr/share/nginx/html/
 
