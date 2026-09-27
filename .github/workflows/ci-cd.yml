@@ -1,0 +1,425 @@
+# =====================================================================
+#  Pipeline de CI/CD - Portal da Universidade (pratica-GCS)
+#
+#  Fluxo (cada estágio só roda se o anterior passar - "needs"):
+#
+#   ┌──────────────┐   ┌──────────────┐
+#   │ 1. Lint &    │   │ 1b. SAST     │   Verificação ESTÁTICA
+#   │   Segredos   │   │   (CodeQL)   │   (sem executar o programa)
+#   └──────┬───────┘   └──────┬───────┘
+#          ▼                  │
+#   ┌──────────────┐          │
+#   │ 2. Testes    │          │           Verificação DINÂMICA isolada
+#   │  unitários   │          │           (Jest + cobertura mínima)
+#   └──────┬───────┘          │
+#          └────────┬─────────┘
+#                   ▼
+#   ┌──────────────────────────┐
+#   │ 3/4. Build da imagem,    │          Artefato imutável (Docker)
+#   │  scan CVE e publicação   │          + Trivy + GHCR
+#   └────────────┬─────────────┘
+#                ▼
+#   ┌──────────────────────────┐
+#   │ 5. Deploy STAGING        │          Ambiente "staging"
+#   │  E2E (Playwright) + DAST │          Validação DINÂMICA completa
+#   └────────────┬─────────────┘
+#                ▼  (somente push na main)
+#   ┌──────────────────────────┐
+#   │ 6a. Aprovação PRODUÇÃO   │          Ambiente "production"
+#   │  (revisor obrigatório)   │          Continuous Delivery (gate manual)
+#   └────────────┬─────────────┘
+#                ▼
+#   ┌──────────────────────────┐
+#   │ 6b. Deploy PRODUÇÃO      │          Ambiente "github-pages"
+#   │  GitHub Pages + smoke    │          (site público)
+#   └──────────────────────────┘
+# =====================================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch: # permite rodar manualmente pela aba Actions
+
+# Evita dois pipelines da mesma branch rodando ao mesmo tempo
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Princípio do menor privilégio: cada job pede só o que precisa
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+  REGISTRY: ghcr.io
+  APP_PORT: "8080"
+
+jobs:
+  # -------------------------------------------------------------------
+  # ESTÁGIO 1 - Verificação estática: lint, segredos e dependências
+  # -------------------------------------------------------------------
+  lint:
+    name: "1. Lint & Segredos"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # Gitleaks lê os commits do PR
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # histórico completo para o Gitleaks varrer todos os commits
+
+      - name: Configurar Node.js (com cache do npm)
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependências (versões travadas no package-lock.json)
+        run: npm ci
+
+      - name: Procurar segredos/credenciais no código (Gitleaks)
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+      - name: Lint do JavaScript (ESLint)
+        run: npm run lint:js
+
+      - name: Lint do HTML (HTMLHint)
+        run: npm run lint:html
+
+      - name: Auditoria de vulnerabilidades nas dependências (npm audit)
+        run: npm audit --audit-level=high
+
+  # -------------------------------------------------------------------
+  # ESTÁGIO 1b - SAST: análise estática de segurança com CodeQL
+  # (roda em paralelo com o lint; resultados na aba Security)
+  # -------------------------------------------------------------------
+  sast:
+    name: "1b. SAST (CodeQL)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v7
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+
+      - name: Executar análise CodeQL
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:javascript-typescript"
+
+  # -------------------------------------------------------------------
+  # ESTÁGIO 2 - Testes unitários + quality gate de cobertura
+  # -------------------------------------------------------------------
+  unit-tests:
+    name: "2. Testes Unitários"
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v7
+
+      - name: Configurar Node.js (com cache do npm)
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Rodar testes com cobertura (quality gate em jest.config.js)
+        run: npm run test:coverage -- --ci
+
+      - name: Publicar resumo da cobertura no job
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e '
+              const t = require("./coverage/coverage-summary.json").total;
+              const l = ["| Métrica | Cobertura |", "|---|---|"];
+              for (const k of ["statements","branches","functions","lines"]) l.push(`| ${k} | ${t[k].pct}% |`);
+              console.log("### Cobertura de testes\n\n" + l.join("\n"));
+            ' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guardar relatório de cobertura
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  # -------------------------------------------------------------------
+  # ESTÁGIOS 3 e 4 - Build do artefato imutável, scan de CVE e publicação
+  # -------------------------------------------------------------------
+  build:
+    name: "3. Build, Scan & Publish"
+    needs: [unit-tests, sast]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # publicar no GitHub Container Registry
+      security-events: write # enviar resultado do Trivy para a aba Security
+    outputs:
+      image: ${{ steps.vars.outputs.image }}
+      version: ${{ steps.vars.outputs.version }}
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v7
+
+      - name: Definir nome/tag da imagem
+        id: vars
+        run: |
+          # o GHCR exige nome em minúsculas (o repositório tem letras maiúsculas)
+          IMAGE="${REGISTRY}/${GITHUB_REPOSITORY,,}"
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "Imagem: ${IMAGE}:sha-${GITHUB_SHA::7} (versão ${VERSION})"
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build da imagem (tag = SHA do commit)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true # carrega a imagem no Docker local para escanear
+          push: false
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          build-args: |
+            APP_VERSION=${{ steps.vars.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scanner de CVE na imagem (Trivy) - bloqueia HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Gerar relatório SARIF do Trivy
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          skip-setup-trivy: true
+
+      - name: Enviar resultado do Trivy para a aba Security
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container
+
+      - name: Exportar imagem como artefato (mesmo binário em todos os ambientes)
+        run: docker save "${IMAGE}:sha-${GITHUB_SHA}" -o image.tar
+
+      - name: Guardar imagem para os estágios de deploy
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 3
+
+      - name: Login no GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publicar imagem no registry (somente main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          docker tag "${IMAGE}:sha-${GITHUB_SHA}" "${IMAGE}:sha-${GITHUB_SHA::7}"
+          docker tag "${IMAGE}:sha-${GITHUB_SHA}" "${IMAGE}:${VERSION}"
+          docker tag "${IMAGE}:sha-${GITHUB_SHA}" "${IMAGE}:latest"
+          docker push --all-tags "${IMAGE}"
+
+  # -------------------------------------------------------------------
+  # ESTÁGIO 5 - Deploy em STAGING + validação dinâmica (E2E e DAST)
+  # O staging é efêmero: o contêiner sobe no próprio runner.
+  # -------------------------------------------------------------------
+  deploy-staging:
+    name: "5. Deploy Staging + E2E + DAST"
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+      BASE_URL: http://localhost:8080/
+    steps:
+      - name: Checkout do código (testes E2E)
+        uses: actions/checkout@v7
+
+      - name: Baixar imagem gerada no build
+        uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+
+      - name: Deploy - subir o contêiner de staging
+        run: |
+          docker load -i image.tar
+          docker run -d --name portal-staging -p ${APP_PORT}:8080 "${IMAGE}:sha-${GITHUB_SHA}"
+
+      - name: Aguardar health check (readiness)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "${BASE_URL}health.json"; then echo; echo "Staging pronto!"; exit 0; fi
+            sleep 2
+          done
+          echo "Staging não respondeu ao health check"; docker logs portal-staging; exit 1
+
+      - name: Smoke test - versão implantada é a do commit
+        run: |
+          curl -fsS "${BASE_URL}health.json" | grep -q "\"commit\":\"${GITHUB_SHA}\""
+          curl -fsS "${BASE_URL}" | grep -q "Portal da Universidade"
+          echo "Smoke test OK"
+
+      - name: Configurar Node.js (com cache do npm)
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependências e navegador do Playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Testes E2E (Playwright)
+        run: npm run test:e2e
+
+      - name: Guardar relatório E2E
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: DAST - varredura de segurança (OWASP ZAP baseline)
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: ${{ env.BASE_URL }}
+          allow_issue_writing: false
+          fail_action: false
+          artifact_name: zap-report
+
+      - name: Derrubar ambiente de staging
+        if: always()
+        run: docker rm -f portal-staging || true
+
+  # -------------------------------------------------------------------
+  # ESTÁGIO 6a - Aprovação para PRODUÇÃO (Continuous Delivery)
+  # O ambiente "production" tem "Required reviewers": o pipeline PAUSA
+  # aqui até alguém aprovar na aba Actions.
+  # -------------------------------------------------------------------
+  approve-production:
+    name: "6a. Aprovação Produção"
+    needs: [build, deploy-staging]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Registrar aprovação
+        run: |
+          echo "### Release aprovada para produção" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Versão: ${{ needs.build.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Imagem: ${{ needs.build.outputs.image }}:sha-${GITHUB_SHA::7}" >> "$GITHUB_STEP_SUMMARY"
+
+  # -------------------------------------------------------------------
+  # ESTÁGIO 6b - Deploy em PRODUÇÃO (GitHub Pages)
+  # Os arquivos publicados são extraídos da MESMA imagem testada em
+  # staging (não há novo build em produção).
+  # -------------------------------------------------------------------
+  deploy-production:
+    name: "6b. Deploy Produção (GitHub Pages)"
+    needs: [build, approve-production]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+    steps:
+      - name: Baixar imagem aprovada
+        uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+
+      - name: Extrair o site de dentro da imagem (artefato imutável)
+        run: |
+          docker load -i image.tar
+          docker create --name extrair "${IMAGE}:sha-${GITHUB_SHA}"
+          docker cp extrair:/usr/share/nginx/html ./site
+          docker rm extrair
+          ls -la site
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Empacotar site para o Pages
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - name: Publicar em produção
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+      - name: Smoke test pós-deploy (produção)
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "${PAGE_URL}health.json" | grep -q "\"commit\":\"${GITHUB_SHA}\""; then
+              echo "Produção respondendo com o commit ${GITHUB_SHA}"
+              echo "### Produção no ar: ${PAGE_URL}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "Produção não respondeu com a versão esperada"; exit 1

@@ -1,0 +1,26 @@
+{
+  "name": "portal-universidade",
+  "version": "1.0.0",
+  "description": "Portal da Universidade - projeto de pratica de Gerencia de Configuracao de Software (GCS)",
+  "private": true,
+  "scripts": {
+    "lint": "npm run lint:js && npm run lint:html",
+    "lint:js": "eslint .",
+    "lint:html": "htmlhint \"src/**/*.html\"",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "test:e2e": "playwright test",
+    "start": "http-server src -p 8080 -c-1"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "htmlhint": "^1.9.2",
+    "http-server": "^14.1.1",
+    "jest": "^30.5.2",
+    "jest-environment-jsdom": "^30.5.2"
+  }
+}

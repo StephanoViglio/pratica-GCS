@@ -10,6 +10,14 @@
 | Documentação | README.md | Documentação principal do projeto | 1.0.0 |
 | Documentação | CONFIG_MAP.md | Mapeamento dos ICs do projeto | 1.0.0 |
 | Documentação | DOCUMENTACAO_TECNICA.md | Documentação técnica do sistema | 1.0.0 |
+| Pipeline | .github/workflows/ci-cd.yml | Definição do pipeline de CI/CD (GitHub Actions) | 1.0.0 |
+| Configuração | package.json / package-lock.json | Dependências de desenvolvimento e scripts | 1.0.0 |
+| Configuração | eslint.config.js / .htmlhintrc | Regras de verificação estática | 1.0.0 |
+| Configuração | jest.config.js / playwright.config.js | Configuração dos testes e quality gate | 1.0.0 |
+| Teste | tests/unit/app.test.js | Testes unitários | 1.0.0 |
+| Teste | tests/e2e/portal.spec.js | Testes E2E | 1.0.0 |
+| Infraestrutura | Dockerfile / nginx.conf | Imagem do contêiner e servidor web | 1.0.0 |
+| Documentação | docs/PIPELINE.md | Documentação do pipeline de CI/CD | 1.0.0 |
 | Controle de versão | Git | Sistema de versionamento distribuído | 2.x |
 | Linguagem | JavaScript | Linguagem da aplicação | ES6 |
 | Linguagem | HTML5 | Estrutura da interface web | HTML5 |

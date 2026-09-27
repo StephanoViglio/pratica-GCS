@@ -1,0 +1,13 @@
+# Dependências
+node_modules/
+
+# Relatórios gerados pelo pipeline / testes
+coverage/
+playwright-report/
+test-results/
+dist/
+site/
+*.tar
+
+# Variáveis de ambiente locais (nunca versionar segredos)
+.env
